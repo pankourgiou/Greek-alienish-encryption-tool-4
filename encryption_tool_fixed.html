@@ -53,6 +53,7 @@
   .g-num { font-size: 9px; color: var(--gold-dim); font-family: 'Cinzel', serif; font-weight: 600; }
   .g-space { width: 16px; height: 52px; display: inline-flex; align-items: center; justify-content: center; color: var(--gold-faint); font-size: 10px; }
   .g-raw { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 52px; font-family: 'IM Fell English', serif; font-size: 1rem; color: var(--gold-dim); }
+  .g-inline-num { display: inline-flex; align-items: center; justify-content: center; height: 52px; padding: 0 4px; font-family: 'Cinzel', serif; font-size: 1.1rem; font-weight: 600; color: var(--gold-light); letter-spacing: 0.05em; }
   .status { text-align: center; font-family: 'IM Fell English', serif; font-style: italic; font-size: 0.78rem; color: var(--gold-dim); min-height: 1.2em; margin-top: 0.5rem; }
   .decoded-out { font-family: 'IM Fell English', serif; font-size: 1.3rem; color: var(--gold-light); letter-spacing: 0.08em; padding: 0.85rem 1rem; background: var(--bg-card); border: 1px solid var(--border); border-radius: 5px; min-height: 52px; word-break: break-word; line-height: 1.7; }
   .decode-hint { font-family: 'IM Fell English', serif; font-style: italic; font-size: 0.78rem; color: var(--gold-dim); margin-top: 0.5rem; line-height: 1.6; }
@@ -231,20 +232,38 @@ function encode(){
   out.innerHTML='';
   if(!txt){ status.textContent=''; return; }
   let count=0;
-  for(const ch of txt){
-    if(ch===' '||ch==='\n'||ch==='\t'){
-      const sp=document.createElement('span'); sp.className='g-space'; sp.textContent='·'; out.appendChild(sp); continue;
-    }
-    const idx=getIdx(ch);
-    if(idx!==undefined){
-      const cell=document.createElement('span'); cell.className='g-cell';
-      cell.title=GREEK[idx].name+' ('+(idx+1)+')';
-      const wrap=document.createElement('div'); wrap.className='img-wrap';
-      const img=document.createElement('img'); img.src=GLYPH_IMGS[idx]; img.alt=GREEK[idx].name; wrap.appendChild(img); cell.appendChild(wrap);
-      const num=document.createElement('span'); num.className='g-num'; num.textContent=String(idx+1); cell.appendChild(num);
-      out.appendChild(cell); count++;
+  // tokenise: group consecutive digits together, keep everything else per-char
+  const tokens=[];
+  let i=0;
+  while(i<txt.length){
+    if(/\d/.test(txt[i])){
+      let num='';
+      while(i<txt.length&&/\d/.test(txt[i])){ num+=txt[i]; i++; }
+      tokens.push({type:'num', val:num});
     } else {
-      const raw=document.createElement('span'); raw.className='g-raw'; raw.textContent=ch; out.appendChild(raw);
+      tokens.push({type:'ch', val:txt[i]}); i++;
+    }
+  }
+  for(const tok of tokens){
+    if(tok.type==='num'){
+      const el=document.createElement('span'); el.className='g-inline-num'; el.textContent=tok.val; out.appendChild(el);
+    } else {
+      const ch=tok.val;
+      if(ch===' '||ch==='\n'||ch==='\t'){
+        const sp=document.createElement('span'); sp.className='g-space'; sp.textContent='·'; out.appendChild(sp);
+      } else {
+        const idx=getIdx(ch);
+        if(idx!==undefined){
+          const cell=document.createElement('span'); cell.className='g-cell';
+          cell.title=GREEK[idx].name+' ('+(idx+1)+')';
+          const wrap=document.createElement('div'); wrap.className='img-wrap';
+          const img=document.createElement('img'); img.src=GLYPH_IMGS[idx]; img.alt=GREEK[idx].name; wrap.appendChild(img); cell.appendChild(wrap);
+          const num=document.createElement('span'); num.className='g-num'; num.textContent=String(idx+1); cell.appendChild(num);
+          out.appendChild(cell); count++;
+        } else {
+          const raw=document.createElement('span'); raw.className='g-raw'; raw.textContent=ch; out.appendChild(raw);
+        }
+      }
     }
   }
   status.textContent=count>0?`${count} glyph${count!==1?'s':''} rendered`:'';
@@ -283,17 +302,31 @@ function setMode(mode){
 function downloadImage(){
   const txt=document.getElementById('txt-in').value;
   if(!txt) return;
-  const items=[];
-  for(const ch of txt){
-    if(ch===' '||ch==='\n'||ch==='\t'){ items.push(null); }
-    else { const i=getIdx(ch); if(i!==undefined) items.push(i); }
+  // tokenise same way as encode: group digits, keep others per-char
+  const tokens=[];
+  let ti=0;
+  while(ti<txt.length){
+    if(/\d/.test(txt[ti])){
+      let num=''; while(ti<txt.length&&/\d/.test(txt[ti])){ num+=txt[ti]; ti++; }
+      tokens.push({type:'num',val:num});
+    } else { tokens.push({type:'ch',val:txt[ti]}); ti++; }
   }
-  const CELL=80, NUM_H=18, PAD=36, GAP=12, SPACE_W=26, ROW_H=CELL+NUM_H+GAP, MAX_W=720;
+  const CELL=80, PAD=36, GAP=12, SPACE_W=26, MAX_W=720, ROW_H=CELL+GAP;
+  // measure items; num tokens get width based on text
+  const offscreen=document.createElement('canvas').getContext('2d');
+  offscreen.font='bold 22px "Courier New",monospace';
+  const items=tokens.map(tok=>{
+    if(tok.type==='num') return {kind:'num',val:tok.val,w:Math.ceil(offscreen.measureText(tok.val).width)+8};
+    const ch=tok.val;
+    if(ch===' '||ch==='\n'||ch==='\t') return {kind:'space',w:SPACE_W};
+    const idx=getIdx(ch);
+    if(idx!==undefined) return {kind:'glyph',idx,w:CELL};
+    return null;
+  }).filter(Boolean);
   const rows=[]; let row=[], rowW=0;
   for(const item of items){
-    const w=item===null?SPACE_W:CELL;
-    if(rowW+w+GAP>MAX_W&&row.length>0){ rows.push(row); row=[]; rowW=0; }
-    row.push(item); rowW+=w+GAP;
+    if(rowW+item.w+GAP>MAX_W&&row.length>0){ rows.push(row); row=[]; rowW=0; }
+    row.push(item); rowW+=item.w+GAP;
   }
   if(row.length>0) rows.push(row);
   const canvasW=MAX_W+PAD*2, canvasH=rows.length*ROW_H+PAD*2-GAP;
@@ -303,22 +336,24 @@ function downloadImage(){
   const vg=ctx.createRadialGradient(canvasW/2,canvasH/2,canvasH*0.1,canvasW/2,canvasH/2,canvasH*0.8);
   vg.addColorStop(0,'rgba(201,168,76,0.04)'); vg.addColorStop(1,'rgba(0,0,0,0.4)');
   ctx.fillStyle=vg; ctx.fillRect(0,0,canvasW,canvasH);
-  const unique=[...new Set(items.filter(i=>i!==null))];
+  const uniqueIdxs=[...new Set(items.filter(i=>i.kind==='glyph').map(i=>i.idx))];
   const cache={};
-  const loads=unique.map(idx=>new Promise(res=>{
+  const loads=uniqueIdxs.map(idx=>new Promise(res=>{
     const im=new Image(); im.onload=()=>{ cache[idx]=im; res(); }; im.src=GLYPH_IMGS[idx];
   }));
   Promise.all(loads).then(()=>{
     rows.forEach((row,ri)=>{
       let x=PAD; const y=PAD+ri*ROW_H;
       row.forEach(item=>{
-        if(item===null){ x+=SPACE_W+GAP; }
-        else {
-          const im=cache[item];
+        if(item.kind==='space'){ x+=item.w+GAP; }
+        else if(item.kind==='glyph'){
+          const im=cache[item.idx];
           if(im){ ctx.save(); ctx.shadowColor='rgba(201,168,76,0.4)'; ctx.shadowBlur=14; ctx.drawImage(im,x,y,CELL,CELL); ctx.restore(); ctx.drawImage(im,x,y,CELL,CELL); }
-          ctx.font='bold 10px "Courier New",monospace'; ctx.fillStyle='#c9a84c'; ctx.textAlign='center';
-          ctx.fillText(String(item+1),x+CELL/2,y+CELL+13);
           x+=CELL+GAP;
+        } else if(item.kind==='num'){
+          ctx.font='bold 22px "Courier New",monospace'; ctx.fillStyle='#e8c97a'; ctx.textAlign='left'; ctx.textBaseline='middle';
+          ctx.fillText(item.val, x, y+CELL/2);
+          x+=item.w+GAP;
         }
       });
     });
